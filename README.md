@@ -1,171 +1,174 @@
-# ☁️vpcctl: Build Your Own VPC on Linux
+# vpcctl — Build Your Own VPC on Linux
 
-## Overview
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat&logo=linux&logoColor=black)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-This project implements a custom **Command Line Interface (CLI) tool** called `vpcctl` that simulates the core functionality of a **Virtual Private Cloud (VPC)** using native **Linux networking primitives**.
+> A Python-based CLI tool that simulates AWS VPC networking from first principles — using only native Linux primitives. No cloud account required. Built to demonstrate deep understanding of how cloud networking actually works under the hood.
 
-It recreates essential cloud networking features, including:
-* VPC creation and isolation
-* Subnet isolation (public/private)
-* Intra-VPC routing
-* NAT gateways for controlled internet access
-* VPC peering for inter-VPC communication
-* Firewall rules (Security Groups)
-
-The tool is built entirely in **Python** and relies on standard Linux utilities like `ip` (for network namespaces, veth pairs, bridges, routing) and `iptables` (for NAT and firewalling).
-
-This project was developed as part of the **HNG Internship Stage 4 Task: Build Your Own VPC on Linux**. The goal is to demonstrate **Linux networking fundamentals from first principles**, including network namespaces for isolation, bridges as virtual routers, and controlled traffic flow—effectively **mirroring cloud VPC behavior on a single host**.
-
-**Note:** No third-party networking libraries are used. All commands are **idempotent** (safe for repeated runs) and actions are logged for transparency.
-
-
-
-##  Features
-
-* **VPC Creation & Management:** Create, delete, and list VPCs with custom CIDR ranges.
-* **Subnets:** Add public/private subnets represented as **network namespaces**, connected via **veth pairs** to a central bridge (the VPC's "router").
-* **Intra-VPC Routing:** Automatic routing and communication between subnets within the same VPC.
-* **NAT Gateway:** Enable outbound internet access for **public subnets only** via `iptables` MASQUERADE; private subnets remain isolated.
-* **VPC Isolation:** Multiple VPCs are **fully isolated** by default—preventing any unauthorized cross-VPC traffic.
-* **VPC Peering:** Optional peering connects VPCs via **veth pairs and static routes** for controlled, private communication.
-* **Firewall Rules:** Apply JSON-based security group policies using **iptables** within the subnet namespaces (e.g., allow/deny ports and protocols).
-* **Test Workloads:** Deploy simple Python web servers into subnets for immediate connectivity testing.
-* **Cleanup & Logging:** Complete and clean teardown of all resources (namespaces, bridges, veths, rules). All actions are logged to `/var/lib/vpcctl/vpcctl.log`.
+This project reimplements the core networking model of a Virtual Private Cloud on a single Linux host using **network namespaces**, **Linux bridges**, **veth pairs**, and **iptables** — the same primitives that power real cloud networking stacks.
 
 ---
 
-##  Requirements & Installation
+## Architecture
 
-### Requirements
+```mermaid
+graph TB
+    subgraph Host["Host Machine"]
+        direction TB
+
+        subgraph VPC1["VPC 1 — br-vpc1 (Gateway: 10.0.0.1)"]
+            PUB["Public Subnet<br/>Namespace: vpc1-public<br/>IP: 10.0.1.2<br/>NAT enabled ✓"]
+            PRIV["Private Subnet<br/>Namespace: vpc1-private<br/>IP: 10.0.2.2<br/>Internet blocked ✗"]
+            PUB -- veth pair --- PUB_BRIDGE[( )]
+            PRIV -- veth pair --- PRIV_BRIDGE[( )]
+        end
+
+        subgraph VPC2["VPC 2 — br-vpc2 (Gateway: 10.1.0.1)"]
+            PUB2["Public Subnet<br/>Namespace: vpc2-public<br/>IP: 10.1.1.2"]
+            PUB2 -- veth pair --- PUB2_BRIDGE[( )]
+        end
+
+        VPC1 <-- "Peering veth pair<br/>(static routes)" --> VPC2
+
+        IPTABLES["iptables<br/>NAT MASQUERADE<br/>Forwarding Rules<br/>Security Groups"]
+        STATE["/var/lib/vpcctl/state.json<br/>Idempotent state"]
+    end
+
+    INTERNET((Internet)) -- "Public subnets only" --> PUB
+```
+
+---
+
+## How Linux Primitives Map to Cloud Concepts
+
+| AWS VPC Concept | Linux Primitive | Implementation |
+|---|---|---|
+| **VPC** | Linux Bridge (`br-vpcX`) | Central gateway with VPC CIDR gateway IP |
+| **Subnet** | Network Namespace (`vpcX-subnetY`) | Isolated network stack per subnet |
+| **ENI / NIC** | Veth Pair | Connects namespace to VPC bridge |
+| **Route Table** | Static Routes | Default routes point to bridge gateway |
+| **NAT Gateway** | `iptables MASQUERADE` | Outbound internet for public subnets |
+| **VPC Peering** | Veth Pair + Static Routes | Controlled inter-VPC traffic |
+| **Security Group** | `iptables` Rules | Per-subnet ingress/egress firewall |
+| **State persistence** | `/var/lib/vpcctl/state.json` | Idempotency and safe cleanup |
+
+---
+
+## Features
+
+- **VPC lifecycle** — create, list, and delete VPCs with custom CIDR ranges
+- **Subnet isolation** — public/private subnets as isolated network namespaces
+- **NAT gateway** — outbound internet access for public subnets via `iptables MASQUERADE`
+- **VPC peering** — controlled inter-VPC communication via veth pairs and static routes
+- **Security groups** — JSON-policy-driven `iptables` firewall rules per subnet
+- **Test workloads** — deploy Python web servers into subnets for immediate connectivity testing
+- **Idempotency** — all commands are safe for repeated runs; state tracked in JSON
+- **Full cleanup** — teardown removes all namespaces, bridges, veths, and iptables rules cleanly
+
+---
+
+## Requirements & Installation
 
 | Requirement | Details |
-| :--- | :--- |
-| **OS** | Linux (tested on Ubuntu/Debian; requires kernel support for namespaces and bridges). |
-| **Privileges** | Must be run as **root** (`sudo`) for network configuration. |
-| **Tools** | `ip` (`iproute2`), `iptables`, **Python 3.6+** (standard libraries only). |
-| **Dependencies** | **None.** No `pip install` required; uses built-in Python modules. |
-
-### Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/yourusername/hng-4-vpc.git](https://github.com/yourusername/hng-4-vpc.git)
-    cd hng-4-vpc
-    ```
-2.  **Make the CLI executable:**
-    ```bash
-    chmod +x vpcctl
-    chmod +x demo.sh
-    chmod +x cleanup.sh
-    ```
-3.  **(Optional) Create a sample policy file for firewall demo:**
-    ```bash
-    cat > policy.json <<EOF
-    {
-      "subnet": "10.0.1.0/24",
-      "ingress": [
-        {"port": 8080, "protocol": "tcp", "action": "allow"},
-        {"port": 22, "protocol": "tcp", "action": "deny"}
-      ]
-    }
-    EOF
-    ```
-
-
-##  Usage
-
-Run all commands using **`sudo ./vpcctl [command]`**. Root privileges are mandatory for network configuration.
-
-### CLI Commands
-
-| Operation | Command | Description |
-| :--- | :--- | :--- |
-| **VPC Create** | `sudo ./vpcctl vpc create --name vpc1 --cidr 10.0.0.0/16` | Creates a new VPC bridge and initializes state. |
-| **VPC List** | `sudo ./vpcctl vpc list` | Lists all active VPCs. |
-| **VPC Delete** | `sudo ./vpcctl vpc delete --name vpc1` | Tears down and deletes a VPC and all its resources. |
-| **Subnet Add** | `sudo ./vpcctl subnet add --vpc vpc1 --name public --cidr 10.0.1.0/24 --type public` | Creates a new network namespace (subnet). |
-| **NAT Enable** | `sudo ./vpcctl nat enable --vpc vpc1 --interface eth0` | Enables NAT for public subnets (replace `eth0` with your host's internet interface). |
-| **VPC Peering** | `sudo ./vpcctl peer create --vpc1 vpc1 --vpc2 vpc2` | Creates a peering connection between two existing VPCs. |
-| **Firewall Apply** | `sudo ./vpcctl firewall apply --vpc vpc1 --subnet public --policy policy.json` | Applies security group rules to a subnet namespace. |
-| **Deploy Workload**| `sudo ./vpcctl deploy webserver --vpc vpc1 --subnet public --port 8080` | Starts a simple HTTP server in the target subnet namespace. |
-
-### Full Demo
-
-For a complete end-to-end demonstration (creating resources, running connectivity tests, applying firewall, and cleanup):
+|---|---|
+| **OS** | Linux (Ubuntu/Debian recommended; kernel namespace + bridge support required) |
+| **Privileges** | Must run as `root` (`sudo`) for network configuration |
+| **Tools** | `ip` (iproute2), `iptables`, Python 3.6+ |
+| **Dependencies** | **None.** Standard library only — no `pip install` required |
 
 ```bash
-./demo.sh
-````
+# Clone the repository
+git clone https://github.com/cypher682/vpcctl-linux-networking.git
+cd vpcctl-linux-networking
 
-*(Note: `demo.sh` runs commands using `sudo` internally.)*
-
-
-
-##  Architecture
-
-The VPC simulation leverages these core Linux networking concepts:
-
-| Component | Linux Primitive | Role |
-| :--- | :--- | :--- |
-| **VPC** | **Linux Bridge** (`br-vpcX`) | Acts as the central **VPC router/gateway** with the VPC's gateway IP (e.g., `10.0.0.1`). |
-| **Subnets** | **Network Namespaces** (`vpcX-subnetY`) | Provides **network isolation** for the subnet/workloads. |
-| **Connection** | **Veth Pairs** | Connects the Subnet Namespace to the VPC Bridge. |
-| **Routing** | **Static Routes** | Default routes in namespaces point to the bridge gateway. |
-| **NAT** | **`iptables` MASQUERADE** | Enables outbound internet access for selected (public) subnets. |
-| **Peering** | **Veth Pair + Static Routes** | Connects two VPC bridges for controlled inter-VPC communication. |
-| **Firewall** | **`iptables` Rules** | Per-subnet security group rules applied within the namespace. |
-| **State** | **`/var/lib/vpcctl/state.json`** | Persists resource metadata for idempotency and safe cleanup. |
-
-### Text-Based Diagram
-
-```text
-Host Machine
-├── Bridge (br-vpc1, Gateway: 10.0.0.1) 
-│   ├── Veth Pair → Namespace (vpc1-public, IP: 10.0.1.2) - NAT enabled
-│   └── Veth Pair → Namespace (vpc1-private, IP: 10.0.2.2) - Isolated
-├── Peering Veth Pair → Bridge (br-vpc2)
-└── iptables (NAT for public, Forwarding Rules on host)
+# Make scripts executable
+chmod +x vpcctl demo.sh cleanup.sh
 ```
 
+---
 
+## CLI Reference
 
-##  Testing & Validation
+Run all commands with `sudo ./vpcctl [command]`.
 
-You can validate the implementation by running the full demo script:
+| Operation | Command |
+|---|---|
+| Create VPC | `sudo ./vpcctl vpc create --name vpc1 --cidr 10.0.0.0/16` |
+| List VPCs | `sudo ./vpcctl vpc list` |
+| Delete VPC | `sudo ./vpcctl vpc delete --name vpc1` |
+| Add Subnet | `sudo ./vpcctl subnet add --vpc vpc1 --name public --cidr 10.0.1.0/24 --type public` |
+| Enable NAT | `sudo ./vpcctl nat enable --vpc vpc1 --interface eth0` |
+| Create Peering | `sudo ./vpcctl peer create --vpc1 vpc1 --vpc2 vpc2` |
+| Apply Firewall | `sudo ./vpcctl firewall apply --vpc vpc1 --subnet public --policy policy.json` |
+| Deploy Workload | `sudo ./vpcctl deploy webserver --vpc vpc1 --subnet public --port 8080` |
+
+### Firewall Policy Example
+
+```json
+{
+  "subnet": "10.0.1.0/24",
+  "ingress": [
+    { "port": 8080, "protocol": "tcp", "action": "allow" },
+    { "port": 22,   "protocol": "tcp", "action": "deny"  }
+  ]
+}
+```
+
+---
+
+## Full Demo
+
+Run the end-to-end demo to create a full environment, test all features, and clean up:
 
 ```bash
-./demo.sh
+sudo ./demo.sh
 ```
 
-The script will perform and validate tests for:
+The demo validates:
+- ✅ VPC and subnet creation
+- ✅ Intra-VPC connectivity (subnet-to-subnet ping/curl)
+- ✅ Internet access from public subnets (NAT)
+- ✅ VPC isolation (no cross-VPC traffic without peering)
+- ✅ VPC peering (traffic between peered VPCs)
+- ✅ Firewall rules (allow/deny port verification)
+- ✅ Full cleanup (no orphaned resources)
 
-  * Creation of all resources (VPCs, subnets).
-  * Deployment of test web servers.
-  * **Intra-VPC** connectivity (subnet-to-subnet ping/curl).
-  * **Internet Access** (NAT functionality from public subnet).
-  * **VPC Isolation** (ensuring no traffic between non-peered VPCs).
-  * **VPC Peering** (successful traffic between peered VPCs).
-  * **Firewall** (testing allow/deny rules).
-  * Cleanup (verification that no orphaned resources remain).
+**Expected output:** All green checkmarks `✓`.
 
-**Expected output:** The script should conclude with **All green checkmarks (✓)** for successes.
-
-**Logs:** Review all actions and system outputs in the log file:
-
+View all actions in the log:
 ```bash
-tail /var/lib/vpcctl/vpcctl.log
+tail -f /var/lib/vpcctl/vpcctl.log
 ```
 
+---
 
-##  Cleanup
+## Cleanup
 
-For an emergency or complete reset of all resources created by `vpcctl`:
-
+To reset everything:
 ```bash
 sudo ./cleanup.sh
 ```
 
-*You will be prompted to confirm the deletion.*
+This aggressively removes all namespaces, bridges, veth pairs, iptables rules, and state files — restoring the host to a clean state.
 
-This script aggressively deletes all known namespaces, bridges, veth pairs, iptables rules, and state files created by the tool, ensuring a clean system state.
+---
 
+## Skills Demonstrated
+
+- **Linux networking internals** — deep understanding of how VPCs are implemented at the kernel level
+- **Network namespace management** — creating and managing isolated network stacks
+- **iptables mastery** — NAT, forwarding rules, and per-namespace firewall policies
+- **Python systems programming** — CLI tool design with no external dependencies, idempotent state management
+- **Cloud networking concepts** — mapping AWS VPC primitives to their Linux equivalents
+
+---
+
+## Author
+
+**Suleiman Abdulrahman** — DevOps & Cloud Engineer  
+[github.com/cypher682](https://github.com/cypher682) | [linkedin.com/in/suleiman-abdulrahman-dev](https://linkedin.com/in/suleiman-abdulrahman-dev)
+
+---
+
+*Completed during HNG13 DevOps Internship (2025)*
