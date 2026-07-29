@@ -10,6 +10,17 @@ This project reimplements the core networking model of a Virtual Private Cloud o
 
 ---
 
+## Highlights
+
+- Python CLI recreating AWS VPC networking primitives locally on Linux without cloud dependencies
+- Network isolation via dedicated Linux network namespaces (`vpcX-public`, `vpcX-private`)
+- Virtual switch & route tables: Linux bridges (`br-vpcX`) acting as VPC gateways
+- Outbound NAT Gateway: `iptables MASQUERADE` for public subnets
+- Inter-VPC Peering: veth pairs connecting bridges across VPCs with static route tables
+- Security Groups: JSON-policy-driven `iptables` ingress/egress firewall rules per subnet
+
+---
+
 ## Architecture
 
 ```mermaid
